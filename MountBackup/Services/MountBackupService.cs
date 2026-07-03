@@ -49,9 +49,10 @@ namespace MountBackup.Services {
         }
 
         private static readonly TimeSpan SaveInterval = TimeSpan.FromSeconds(1);
-        private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(90);
         private static readonly TimeSpan SlewWaitTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan TrackingEnableTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan DataSettleTimeout = TimeSpan.FromSeconds(30);
         private const int MaxBufferedLogEntries = 200;
 
         private readonly IProfileService profileService;
@@ -70,8 +71,8 @@ namespace MountBackup.Services {
         private volatile SavedPosition lastSaved;
         private SavedPosition lastWritten;
         private volatile RestoreState state = RestoreState.NotConnected;
-        private DateTime? coordsNaNSince;
-        private bool coordsNaNWarned;
+        private DateTime? implausibleSince;
+        private bool implausibleWarned;
         private DateTime lastPoseChangeUtc = DateTime.UtcNow;
         private bool watchdogAlarmed;
         private (double RaHours, double LstHours)? freezeReference;
@@ -220,15 +221,18 @@ namespace MountBackup.Services {
             var info = telescopeMediator.GetInfo();
             if (info == null || !info.Connected) { return; }
 
-            if (double.IsNaN(info.RightAscension) || double.IsNaN(info.Declination)) {
-                coordsNaNSince ??= DateTime.UtcNow;
-                if (!coordsNaNWarned && DateTime.UtcNow - coordsNaNSince > TimeSpan.FromSeconds(60)) {
-                    coordsNaNWarned = true;
-                    Log(PluginLogLevel.Warning, "The mount driver does not report RA/Dec — Mount Backup cannot save the position with this driver.");
+            if (!IsPlausible(info, out var implausibleReason)) {
+                implausibleSince ??= DateTime.UtcNow;
+                if (!implausibleWarned && DateTime.UtcNow - implausibleSince > TimeSpan.FromSeconds(60)) {
+                    implausibleWarned = true;
+                    Log(PluginLogLevel.Warning, $"Mount data has been implausible for 60 s ({implausibleReason}) — nothing is saved until the mount reports sane data. Did it finish booting?");
                 }
                 return;
             }
-            coordsNaNSince = null;
+            if (implausibleSince != null) {
+                implausibleSince = null;
+                implausibleWarned = false;
+            }
 
             var siteLat = info.SiteLatitude;
             var siteLon = info.SiteLongitude;
@@ -325,6 +329,39 @@ namespace MountBackup.Services {
             freezeReference = null;
         }
 
+        /// <summary>
+        /// A mount that has not finished booting reports defaults — NaNs, zeros, or a sidereal
+        /// clock that disagrees with the wall clock. Nothing from such a snapshot may be trusted:
+        /// neither saved to disk nor used as a sync reference. The driver computes RA from its
+        /// own sidereal clock, so a broken clock invalidates the whole snapshot.
+        /// </summary>
+        private bool IsPlausible(TelescopeInfo info, out string reason) {
+            if (double.IsNaN(info.RightAscension) || double.IsNaN(info.Declination)) {
+                reason = "the driver does not report RA/Dec";
+                return false;
+            }
+            if (info.RightAscension < 0 || info.RightAscension > 24 || Math.Abs(info.Declination) > 90) {
+                reason = $"RA/Dec out of range (RA {info.RightAscension:F4} h, Dec {info.Declination:F4}°)";
+                return false;
+            }
+            if (info.RightAscension == 0 && info.Declination == 0) {
+                reason = "RA and Dec are both exactly 0 — boot-time defaults";
+                return false;
+            }
+            if (!double.IsNaN(info.SiderealTime)) {
+                var lon = double.IsNaN(info.SiteLongitude)
+                    ? profileService.ActiveProfile.AstrometrySettings.Longitude
+                    : info.SiteLongitude;
+                var offSeconds = Math.Abs(SavedPosition.WrapPm12(info.SiderealTime - AstroUtil.GetLocalSiderealTime(DateTime.Now, lon))) * 3600.0;
+                if (offSeconds > 60) {
+                    reason = $"the driver's sidereal clock is {offSeconds:F0} s off from the computed one";
+                    return false;
+                }
+            }
+            reason = null;
+            return true;
+        }
+
         /// <summary>Driver-reported RA/Dec normalized to JNOW plus the hour angle, using the
         /// driver's own sidereal clock when available so save and restore share one convention.</summary>
         private static (double HaHours, double RaJnowHours, double DecJnowDeg) AxisPoseFrom(TelescopeInfo info, double siteLonDeg) {
@@ -340,25 +377,41 @@ namespace MountBackup.Services {
             return (AstroUtil.GetHourAngle(lst, ra), ra, dec);
         }
 
-        /// <summary>ASCOM has no way to demand a pier side in a sync; the driver picks the axis
-        /// solution itself. If it picked the mirrored one, every subsequent GoTo is wrong —
-        /// that must be loud.</summary>
-        private async Task VerifyPierSideAfterSyncAsync(string savedPierSide, CancellationToken token) {
-            if (PierUnknown(savedPierSide)) { return; }
+        private const string SavingPausedHint =
+            "Saving stays paused to protect the last good position — use Restore now (or Reset) once the mount is healthy.";
+
+        /// <summary>Some drivers accept a sync and still keep reporting the old position, and
+        /// ASCOM has no way to demand a pier side — the driver picks the axis solution itself.
+        /// Read the state back after a polling round and alarm loudly when the restore did not
+        /// actually take.</summary>
+        private async Task VerifyRestoreAfterSyncAsync(SavedPosition saved, CancellationToken token) {
             try {
                 // wait out one polling round so GetInfo reflects the post-sync state
                 await Task.Delay(TimeSpan.FromSeconds(3), token);
             } catch (OperationCanceledException) { return; }
 
-            var pierNow = telescopeMediator.GetInfo()?.SideOfPier.ToString();
-            if (pierNow == null || PierUnknown(pierNow)) { return; }
-            if (string.Equals(pierNow, savedPierSide, StringComparison.Ordinal)) {
-                Log(PluginLogLevel.Info, $"Pier side verified after sync: {FormatPier(pierNow)}.");
-            } else {
-                var message = $"After the sync the mount reports {FormatPier(pierNow)} but the saved pose was {FormatPier(savedPierSide)} — the driver calibrated to the mirrored axis solution and GoTos may be wrong. Re-home or re-park the mount and restore again.";
+            var info = telescopeMediator.GetInfo();
+            if (info == null || !info.Connected || !IsPlausible(info, out _)) { return; }
+
+            var (haNow, _, decNow) = AxisPoseFrom(info, saved.SiteLonDeg);
+            var haOffsetDeg = Math.Abs(SavedPosition.WrapPm12(haNow - saved.HaHours)) * 15.0;
+            var decOffsetDeg = Math.Abs(decNow - saved.DecDeg);
+            if (haOffsetDeg > 0.5 || decOffsetDeg > 0.5) {
+                var message = $"The driver accepted the sync but still reports a pose {Math.Max(haOffsetDeg, decOffsetDeg):F2}° away from the restored one — the restore did NOT take effect. Check the driver's sync handling ('No Sync' option, alignment model).";
                 Log(PluginLogLevel.Error, message);
                 Notification.ShowError($"Mount Backup: {message}");
+                return;
             }
+
+            var pierNow = info.SideOfPier.ToString();
+            if (!PierUnknown(saved.PierSide) && !PierUnknown(pierNow) && !string.Equals(pierNow, saved.PierSide, StringComparison.Ordinal)) {
+                var message = $"After the sync the mount reports {FormatPier(pierNow)} but the saved pose was {FormatPier(saved.PierSide)} — the driver calibrated to the mirrored axis solution and GoTos may be wrong. Re-home or re-park the mount and restore again.";
+                Log(PluginLogLevel.Error, message);
+                Notification.ShowError($"Mount Backup: {message}");
+                return;
+            }
+
+            Log(PluginLogLevel.Info, $"Restore verified: the driver reports the restored pose ({FormatPier(pierNow)}).");
         }
 
         private static bool PierUnknown(string pierSide) {
@@ -446,6 +499,8 @@ namespace MountBackup.Services {
                 lastWritten = null;
                 ResetWatchdogWindow();
                 coarseReportingNoted = false;
+                implausibleSince = null;
+                implausibleWarned = false;
                 SetState(RestoreState.NotConnected);
                 Log(PluginLogLevel.Info, "Mount disconnected. Last saved position is kept for the next connect.");
             } catch (Exception ex) {
@@ -552,10 +607,37 @@ namespace MountBackup.Services {
                 var slewWait = Stopwatch.StartNew();
                 while (telescopeMediator.GetInfo()?.Slewing == true) {
                     if (slewWait.Elapsed > SlewWaitTimeout) {
-                        Log(PluginLogLevel.Error, "Restore aborted — mount kept slewing for 30 s.");
+                        keepSuspended = true;
+                        SetState(RestoreState.RestorePending);
+                        Log(PluginLogLevel.Error, "Restore aborted — mount kept slewing for 30 s. " + SavingPausedHint);
                         return;
                     }
                     await Task.Delay(500, timeout.Token);
+                }
+
+                // a mount that is still booting reports defaults (zeros, bogus sidereal clock);
+                // require two consecutive sane polls before trusting anything it says
+                var settleWait = Stopwatch.StartNew();
+                var saneStreak = 0;
+                while (saneStreak < 2) {
+                    info = telescopeMediator.GetInfo();
+                    if (info == null || !info.Connected) {
+                        Log(PluginLogLevel.Warning, "Restore aborted — mount disconnected while waiting for plausible data.");
+                        return;
+                    }
+                    saneStreak = IsPlausible(info, out var implausibleReason) ? saneStreak + 1 : 0;
+                    if (saneStreak < 2) {
+                        if (settleWait.Elapsed > DataSettleTimeout) {
+                            Interlocked.Exchange(ref restoreArmed, 1);
+                            keepSuspended = true;
+                            SetState(RestoreState.RestorePending);
+                            var message = $"Restore aborted — the mount kept reporting implausible data for 30 s ({implausibleReason ?? "data not stable yet"}). Did it finish booting? " + SavingPausedHint;
+                            Log(PluginLogLevel.Error, message);
+                            Notification.ShowError($"Mount Backup: {message}");
+                            return;
+                        }
+                        await Task.Delay(1000, timeout.Token);
+                    }
                 }
 
                 var saved = await store.LoadLastAsync();
@@ -617,7 +699,9 @@ namespace MountBackup.Services {
                     var trackWait = Stopwatch.StartNew();
                     while (telescopeMediator.GetInfo()?.TrackingEnabled != true) {
                         if (trackWait.Elapsed > TrackingEnableTimeout) {
-                            Log(PluginLogLevel.Error, "Could not enable tracking within 5 s — sync skipped.");
+                            keepSuspended = true;
+                            SetState(RestoreState.RestorePending);
+                            Log(PluginLogLevel.Error, "Could not enable tracking within 5 s — sync skipped. " + SavingPausedHint);
                             Notification.ShowError("Mount Backup: could not enable tracking — position restore skipped.");
                             telescopeMediator.SetTrackingEnabled(false);
                             return;
@@ -638,18 +722,24 @@ namespace MountBackup.Services {
                 if (synced) {
                     Log(PluginLogLevel.Info, $"Position restored: the mount now points to RA {coords.RAString} / Dec {coords.DecString}.");
                     Notification.ShowSuccess($"Mount Backup: position restored (RA {coords.RAString} / Dec {coords.DecString}).");
-                    await VerifyPierSideAfterSyncAsync(saved.PierSide, timeout.Token);
+                    await VerifyRestoreAfterSyncAsync(saved, timeout.Token);
                 } else {
-                    Log(PluginLogLevel.Error, "Sync was rejected. Check that 'No Sync' is not enabled under Options > Equipment > Telescope and that the driver accepts syncs. Park and unpark to retry.");
-                    Notification.ShowError("Mount Backup: sync was rejected by the mount — position NOT restored.");
                     Interlocked.Exchange(ref restoreArmed, 1);
+                    keepSuspended = true;
+                    SetState(RestoreState.RestorePending);
+                    Log(PluginLogLevel.Error, "Sync was rejected. Check that 'No Sync' is not enabled under Options > Equipment > Telescope and that the driver accepts syncs. Park and unpark to retry. " + SavingPausedHint);
+                    Notification.ShowError("Mount Backup: sync was rejected by the mount — position NOT restored.");
                 }
             } catch (OperationCanceledException) {
-                Log(PluginLogLevel.Error, "Restore timed out after 60 s.");
+                keepSuspended = true;
+                SetState(RestoreState.RestorePending);
+                Log(PluginLogLevel.Error, $"Restore timed out after {(int)RestoreTimeout.TotalSeconds} s. " + SavingPausedHint);
                 Notification.ShowError("Mount Backup: position restore timed out.");
             } catch (Exception ex) {
                 Logger.Error(ex);
-                Log(PluginLogLevel.Error, $"Restore failed: {ex.Message}");
+                keepSuspended = true;
+                SetState(RestoreState.RestorePending);
+                Log(PluginLogLevel.Error, $"Restore failed: {ex.Message}. " + SavingPausedHint);
                 Notification.ShowError($"Mount Backup: position restore failed — {ex.Message}");
             } finally {
                 if (!keepSuspended) {

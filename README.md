@@ -45,6 +45,14 @@ again — no plate solve, no manual repositioning.
   - RA drifting at sidereal rate → the mount is standing still, not tracking → **alarm**;
   - RA steady while the sidereal clock advances → the mount tracks fine and the driver
     merely reports Alt/Az at coarse resolution → no alarm.
+- **Boot protection**: a mount that has not finished starting up reports defaults — NaNs,
+  zeros, or a sidereal clock that disagrees with the wall clock. Such snapshots are never
+  saved and never used as a sync reference: the restore waits for two consecutive sane
+  polls (up to 30 s), and if the restore fails or times out, **saving stays paused** so
+  bogus data can never overwrite the last good position (resume with Restore now or Reset).
+- **Restore verification**: a few seconds after a successful sync the reported pose is read
+  back; if the driver accepted the sync but still reports the old position, or calibrated
+  to the mirrored pier side, an error notification is raised.
 - **Restore now** button: manual restore at any time (ignores the auto-restore switch and
   the deviation threshold).
 - **Reset** button: deletes the saved position; nothing is restored until a new one is

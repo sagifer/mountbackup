@@ -28,6 +28,14 @@ koordináta-tudását. A plugin:
   (nem követ); ha az RA stabil és a szideridő halad → a mount rendben követ, csak a driver
   durva felbontásban jelent — ilyenkor **nincs** riasztás (ez okozta a korábbi téves
   riasztásokat);
+- **boot-védelem**: a még el nem indult mount alapértelmezett értékeket jelent (NaN, nullák,
+  vagy a fali órával nem egyező szideridő). Az ilyen pillanatkép soha nem kerül mentésre és
+  sync-referenciának sem használódik: a restore két egymást követő ép lekérdezésre vár (max.
+  30 s), és ha a restore meghiúsul vagy időtúllépéses, a **mentés szüneteltetve marad**, hogy
+  hibás adat ne írhassa felül az utolsó jó pozíciót (folytatás: Restore now vagy Reset);
+- **restore-ellenőrzés**: sikeres sync után pár másodperccel visszaolvassa a jelentett pózt;
+  ha a driver elfogadta a syncet, de továbbra is a régi pozíciót jelenti, vagy a tükrözött
+  pier side-ra kalibrált, hiba-értesítés jön;
 - **Restore now** gomb: kézi visszaállítás bármikor (az auto-restore kapcsolót és a küszöböt
   figyelmen kívül hagyja);
 - a **Reset** gomb törli a mentett pozíciót — utána nem történik visszaállítás, amíg új mentés
