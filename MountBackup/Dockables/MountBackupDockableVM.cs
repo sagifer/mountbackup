@@ -66,10 +66,12 @@ namespace MountBackup.Dockables {
             }
         }
 
-        public string SavedAltAzText {
+        public string SavedPoseText {
             get {
                 var saved = service.LastSaved;
-                return saved == null ? "—" : $"Alt {AstroUtil.DegreesToDMS(saved.AltDeg)}  /  Az {AstroUtil.DegreesToDMS(saved.AzDeg)}";
+                return saved == null
+                    ? "—"
+                    : $"HA {AstroUtil.HoursToHMS(saved.HaHours)}  /  Dec {AstroUtil.DegreesToDMS(saved.DecDeg)}  /  {MountBackupService.FormatPier(saved.PierSide)}";
             }
         }
 
@@ -92,14 +94,9 @@ namespace MountBackup.Dockables {
                 var saved = service.LastSaved;
                 if (saved == null) { return "—"; }
                 try {
-                    var topo = new TopocentricCoordinates(
-                        Angle.ByDegree(saved.AzDeg),
-                        Angle.ByDegree(saved.AltDeg),
-                        Angle.ByDegree(saved.SiteLatDeg),
-                        Angle.ByDegree(saved.SiteLonDeg),
-                        saved.SiteElevM);
-                    var coords = topo.Transform(Epoch.JNOW);
-                    return $"RA {coords.RAString}  /  Dec {coords.DecString} (JNOW)";
+                    var lst = AstroUtil.GetLocalSiderealTimeNow(saved.SiteLonDeg);
+                    var ra = SavedPosition.Wrap24(lst - saved.HaHours);
+                    return $"RA {AstroUtil.HoursToHMS(ra)}  /  Dec {AstroUtil.DegreesToDMS(saved.DecDeg)} (JNOW)";
                 } catch (Exception ex) {
                     Logger.Error(ex);
                     return "?";
@@ -130,7 +127,7 @@ namespace MountBackup.Dockables {
         }
 
         private void OnServiceStateChanged() {
-            RaisePropertyChanged(nameof(SavedAltAzText));
+            RaisePropertyChanged(nameof(SavedPoseText));
             RaisePropertyChanged(nameof(SavedTimestampText));
             RaisePropertyChanged(nameof(SavedAgeText));
             RaisePropertyChanged(nameof(MountStatusText));

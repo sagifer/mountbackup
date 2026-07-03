@@ -6,9 +6,10 @@
     <DataTemplate x:Key="Mount Backup_Options">
         <StackPanel Orientation="Vertical" Margin="10" MaxWidth="700" HorizontalAlignment="Left">
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
-                Mount Backup continuously saves the mount position in a time-independent Alt/Az format
-                and syncs it back on connect or unpark. Made for clutchless mounts that cannot move
-                while powered off. Tracking is always switched off after the restore sync.
+                Mount Backup continuously saves the mount's physical axis pose (hour angle,
+                declination and pier side — time-independent and unambiguous even at the pole)
+                and syncs it back on connect or unpark. Made for clutchless mounts that cannot
+                move while powered off. Tracking is always switched off after the restore sync.
             </TextBlock>
 
             <CheckBox Content="Auto-restore position on connect/unpark"

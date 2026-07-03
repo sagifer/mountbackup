@@ -4,26 +4,30 @@ NINA 3.2 plugin **kuplung nélküli** (pl. harmonic drive) mountokhoz. Az ilyen 
 kikapcsolva garantáltan nem mozdul el fizikailag, de lefagyás / áramszünet után elveszti a
 koordináta-tudását. A plugin:
 
-- **másodpercenként fájlba menti** a mount pozícióját **Alt/Az-ban** (időfüggetlen formátum),
-  SSD-kímélő módon (sorok hozzáfűzése + rotáció 256 KB felett, visszaolvasáskor az utolsó
-  érvényes sor nyer);
-- a mount **csatlakozásakor vagy unparkolásakor visszasync-eli** az utolsó mentett pozíciót —
-  a mentett Alt/Az-ból az *aktuális* időpontra számolt RA/Dec-kel, így akármennyi idő telt el,
-  a mount koordinátában is ugyanoda mutat, ahova fizikailag;
+- **másodpercenként fájlba menti** a mount **tengelypózát**: óraszög (HA) + deklináció +
+  pier side. Ez időfüggetlen (a kikapcsolt mount HA/Dec-je nem változik), és az Alt/Az
+  *iránnyal* szemben a póluson is egyértelmű: Dec 90°-nál minden óratengely-állás ugyanabba
+  az irányba néz, de a driver az RA-t az óratengely-enkóderből számolja, így a HA = LST − RA
+  megőrzi az információt. A mentés SSD-kímélő (sorok hozzáfűzése + rotáció 256 KB felett,
+  visszaolvasáskor az utolsó érvényes sor nyer);
+- a mount **csatlakozásakor vagy unparkolásakor visszasync-eli** az utolsó mentett pózt —
+  a mentett óraszögből az *aktuális* szideridőre számolt RA-val, így akármennyi idő telt el,
+  a mount koordinátában is ugyanoda mutat, ahova fizikailag; sync után a **pier side-ot
+  visszaellenőrzi**, eltérésnél (tükrözött tengelymegoldás) hangos hibát jelez;
 - ha a tracking nem megy, a sync idejére bekapcsolja, és **a sync után mindenképpen kikapcsolja
   a követést**;
 - minden lépést időbélyeggel logol a saját dockable paneljére (Imaging fül) és a NINA logba,
   a fontos eseményekről (sikeres/sikertelen restore, riasztás) **NINA toast értesítést** is ad;
   a logolás az Options oldalon kikapcsolható (hibák és riasztások ilyenkor is logolódnak);
-- **eltérés-küszöb**: ha a mount hitt pozíciója a beállított szögön (alapból 1°) belül egyezik a
-  mentettel, a sync kimarad — egészséges éjszakán a plugin hozzá sem nyúl a mounthoz (0 = mindig
-  sync-el);
-- **fagyás-őrkutya**: ha tracking közben a jelentett Alt/Az a beállított ideig (alapból 60 s)
+- **eltérés-küszöb**: ha a mount hitt tengelypóza (ΔHA, ΔDec, pier side) a beállított szögön
+  (alapból 1°) belül egyezik a mentettel, a sync kimarad — egészséges éjszakán a plugin hozzá
+  sem nyúl a mounthoz (0 = mindig sync-el);
+- **fagyás-őrkutya**: ha tracking közben a jelentett póz a beállított ideig (alapból 60 s)
   egyáltalán nem változik, az RA és a driver szideridő-órája alapján dönt: ha a szideridő sem
   halad → a driver/kapcsolat fagyott le; ha az RA szideridő-ütemben kúszik → a mount áll
   (nem követ); ha az RA stabil és a szideridő halad → a mount rendben követ, csak a driver
-  durva felbontásban adja az Alt/Az-t — ilyenkor **nincs** riasztás (ez okozta a korábbi
-  téves riasztásokat);
+  durva felbontásban jelent — ilyenkor **nincs** riasztás (ez okozta a korábbi téves
+  riasztásokat);
 - **Restore now** gomb: kézi visszaállítás bármikor (az auto-restore kapcsolót és a küszöböt
   figyelmen kívül hagyja);
 - a **Reset** gomb törli a mentett pozíciót — utána nem történik visszaállítás, amíg új mentés
@@ -68,9 +72,14 @@ Tipp: a mentett pozíció frissessége a NINA *Device Polling Interval* beállí
   küszöb 0-ra állítva a sync mindig lefut;
 - **őrkutya**: timeout 10 s-ra állítva, tracking be, majd a driver-kommunikáció megszakítása
   (pl. USB kihúzás) → egyszeri hiba-toast + log; a pozíció újbóli változásával újraéled;
-- **őrkutya, téves riasztás ellenpróba**: tracking egészségesen fut, de a driver percre
-  kerekített Alt/Az-t ad (vagy pólusközeli cél) → nincs riasztás, egyszeri info-log jelzi,
-  hogy a durva Alt/Az felbontást észlelte.
+- **őrkutya, téves riasztás ellenpróba**: tracking egészségesen fut, de a driver durva
+  felbontásban jelent (vagy pólusközeli cél) → nincs riasztás, egyszeri info-log jelzi,
+  hogy a durva felbontást észlelte;
+- **pólus-teszt**: mount a pólus közelében (Dec ≈ 89–90°), különböző óratengely-állásokban
+  mentés → restore után az óratengely a mentett állásba kerül (Alt/Az-alapú mentéssel ez
+  az információ elveszne);
+- **migráció**: régi, v1-es (Alt/Az-alapú) pozíciófájllal indítva a betöltés konvertál
+  (a v1 sorokban rögzített RA/Dec-ből), a restore működik.
 
 ## Felépítés
 

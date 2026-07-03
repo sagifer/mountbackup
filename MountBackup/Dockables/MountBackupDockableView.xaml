@@ -35,8 +35,8 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Saved Alt/Az" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SavedAltAzText}" Margin="0,2" FontWeight="Bold" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Saved pose" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SavedPoseText}" Margin="0,2" FontWeight="Bold" />
 
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="Saved at" Margin="0,2,10,2" />
                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SavedTimestampText}" Margin="0,2" />

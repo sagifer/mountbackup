@@ -11,7 +11,7 @@ using System.Runtime.InteropServices;
 // [MANDATORY] The name of your plugin
 [assembly: AssemblyTitle("Mount Backup")]
 // [MANDATORY] A short description of your plugin
-[assembly: AssemblyDescription("Continuously saves the mount position in a time-independent Alt/Az format and restores it via sync on connect or unpark. Made for clutchless mounts that cannot move while powered off.")]
+[assembly: AssemblyDescription("Continuously saves the mount's physical axis pose (hour angle, declination and pier side) and restores it via sync on connect or unpark. Made for clutchless mounts that cannot move while powered off.")]
 
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Ferenc Sagi")]
@@ -28,7 +28,7 @@ using System.Runtime.InteropServices;
 // The url to the license
 [assembly: AssemblyMetadata("LicenseURL", "https://www.mozilla.org/en-US/MPL/2.0/")]
 // The repository where your plugin is hosted
-[assembly: AssemblyMetadata("Repository", "https://github.com/garanddesign/nina.plugin.mountbackup")]
+[assembly: AssemblyMetadata("Repository", "https://github.com/sagifer/mountbackup")]
 
 // Common tags for searching the plugin
 [assembly: AssemblyMetadata("Tags", "Mount,Backup,Restore,Sync,Harmonic,Clutchless")]
@@ -36,8 +36,8 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyMetadata("LongDescription", @"Mount Backup is made for mounts **without clutches** (e.g. harmonic drive mounts). Such a mount is guaranteed not to move physically while powered off — but after a firmware freeze or power loss it forgets where it is pointing.
 
 This plugin:
-* Saves the connected mount's position to a file every second in a **time-independent Alt/Az format** (SSD-friendly: appended lines with periodic rotation, the last valid line wins).
-* When the mount **connects** or is **unparked**, it syncs the mount to the last saved position. The saved Alt/Az is converted to RA/Dec for the *current* time, so the mount points to the same place both physically and in coordinates — no matter how much time has passed.
+* Saves the connected mount's **physical axis pose** — hour angle, declination and pier side — to a file every second (SSD-friendly: appended lines with periodic rotation, the last valid line wins). The pose is time-independent (a powered-off mount keeps its HA/Dec) and stays unambiguous even at the celestial pole, unlike an Alt/Az direction.
+* When the mount **connects** or is **unparked**, it syncs the mount to the last saved pose: RA is recomputed from the saved hour angle for the *current* sidereal time, so the mount points to the same place both physically and in coordinates — no matter how much time has passed. The pier side is verified after the sync.
 * If tracking is off, it is enabled just for the sync, and tracking is **always switched off after the sync**.
 * Provides a dockable panel for the imaging tab showing the last saved coordinates and a timestamped log of every save/restore action.
 * A **Reset** button clears the saved position so no restore happens.")]

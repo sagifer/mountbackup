@@ -23,18 +23,23 @@ again — no plate solve, no manual repositioning.
 
 ## What it does
 
-- **Saves the mount position to disk every second**, in **Alt/Az** — a time-independent
-  format: the physical pose is the same no matter how much time passes. Writes are
-  SSD-friendly (append + rotation above 256 KB; on load the last valid line wins).
-- **Restores on connect or unpark**: converts the saved Alt/Az (with the saved site
-  coordinates) to RA/Dec *at the current time* and syncs the mount to it. Works after any
-  downtime — minutes or weeks.
+- **Saves the mount's physical axis pose to disk every second**: **hour angle,
+  declination and pier side**. The pose is time-independent — a powered-off mount keeps
+  its HA/Dec no matter how much time passes — and, unlike an Alt/Az *direction*, it stays
+  unambiguous even at the celestial pole (at Dec 90° every hour-axis angle points the same
+  way, but the driver derives RA from the hour-axis encoder, so HA = LST − RA preserves
+  it). Writes are SSD-friendly (append + rotation above 256 KB; on load the last valid
+  line wins).
+- **Restores on connect or unpark**: recomputes RA from the saved hour angle for the
+  *current* sidereal time and syncs the mount to it. Works after any downtime — minutes
+  or weeks. After the sync the reported **pier side is verified** against the saved one;
+  a mismatch (the driver calibrated to the mirrored axis solution) raises a loud error.
 - If tracking is off, it is enabled just for the sync, and **tracking is always switched
   off after the restore** so the mount never runs away unattended.
-- **Deviation threshold**: if the mount's reported position is already within the
-  configured angle of the saved one (default 1°), the sync is skipped — on a healthy
-  night the plugin never touches the mount. Set 0 to always sync.
-- **Freeze watchdog**: if the reported Alt/Az stops changing while tracking, the plugin
+- **Deviation threshold**: if the mount's reported axis pose (ΔHA, ΔDec, pier side) is
+  already within the configured angle of the saved one (default 1°), the sync is skipped —
+  on a healthy night the plugin never touches the mount. Set 0 to always sync.
+- **Freeze watchdog**: if the reported pose stops changing while tracking, the plugin
   cross-checks RA and the driver's sidereal clock to tell the failure modes apart:
   - sidereal clock not advancing → the driver or the connection is frozen → **alarm**;
   - RA drifting at sidereal rate → the mount is standing still, not tracking → **alarm**;

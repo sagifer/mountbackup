@@ -15,7 +15,8 @@ using System.Threading.Tasks;
 namespace MountBackup.Services {
 
     /// <summary>
-    /// Core engine of the plugin: a 1 s save loop persisting the mount pose in Alt/Az,
+    /// Core engine of the plugin: a 1 s save loop persisting the mount's axis pose (hour
+    /// angle / declination / pier side, all earth-fixed for a powered-off mount),
     /// and a restore state machine that syncs the last saved pose back to the mount on
     /// connect/unpark. Created exactly once; the plugin manifest and the dockable VM are
     /// both instantiated by MEF in unspecified order, so both attach via <see cref="GetOrCreate"/>.
@@ -69,12 +70,12 @@ namespace MountBackup.Services {
         private volatile SavedPosition lastSaved;
         private SavedPosition lastWritten;
         private volatile RestoreState state = RestoreState.NotConnected;
-        private DateTime? altAzNaNSince;
-        private bool altAzNaNWarned;
+        private DateTime? coordsNaNSince;
+        private bool coordsNaNWarned;
         private DateTime lastPoseChangeUtc = DateTime.UtcNow;
         private bool watchdogAlarmed;
         private (double RaHours, double LstHours)? freezeReference;
-        private bool coarseAltAzNoted;
+        private bool coarseReportingNoted;
 
         public event Action<PluginLogEntry> LogEmitted;
         public event Action StateChanged;
@@ -163,7 +164,7 @@ namespace MountBackup.Services {
                 var saved = await store.LoadLastAsync();
                 lastSaved = saved;
                 if (saved != null) {
-                    Log(PluginLogLevel.Info, $"Loaded saved position: Alt {AstroUtil.DegreesToDMS(saved.AltDeg)} / Az {AstroUtil.DegreesToDMS(saved.AzDeg)}, saved {FormatAge(DateTime.UtcNow - saved.TimestampUtc)} ago.");
+                    Log(PluginLogLevel.Info, $"Loaded saved position: HA {AstroUtil.HoursToHMS(saved.HaHours)} / Dec {AstroUtil.DegreesToDMS(saved.DecDeg)} ({FormatPier(saved.PierSide)}), saved {FormatAge(DateTime.UtcNow - saved.TimestampUtc)} ago.");
                 } else {
                     Log(PluginLogLevel.Info, "No saved position on disk yet.");
                 }
@@ -219,15 +220,15 @@ namespace MountBackup.Services {
             var info = telescopeMediator.GetInfo();
             if (info == null || !info.Connected) { return; }
 
-            if (double.IsNaN(info.Altitude) || double.IsNaN(info.Azimuth)) {
-                altAzNaNSince ??= DateTime.UtcNow;
-                if (!altAzNaNWarned && DateTime.UtcNow - altAzNaNSince > TimeSpan.FromSeconds(60)) {
-                    altAzNaNWarned = true;
-                    Log(PluginLogLevel.Warning, "The mount driver does not report Alt/Az — Mount Backup cannot save the position with this driver.");
+            if (double.IsNaN(info.RightAscension) || double.IsNaN(info.Declination)) {
+                coordsNaNSince ??= DateTime.UtcNow;
+                if (!coordsNaNWarned && DateTime.UtcNow - coordsNaNSince > TimeSpan.FromSeconds(60)) {
+                    coordsNaNWarned = true;
+                    Log(PluginLogLevel.Warning, "The mount driver does not report RA/Dec — Mount Backup cannot save the position with this driver.");
                 }
                 return;
             }
-            altAzNaNSince = null;
+            coordsNaNSince = null;
 
             var siteLat = info.SiteLatitude;
             var siteLon = info.SiteLongitude;
@@ -240,16 +241,17 @@ namespace MountBackup.Services {
             }
             if (double.IsNaN(siteElev)) { siteElev = 0; }
 
+            var (ha, _, decJnow) = AxisPoseFrom(info, siteLon);
             var position = new SavedPosition(
                 DateTime.UtcNow,
-                info.Altitude,
-                info.Azimuth,
+                ha,
+                decJnow,
                 siteLat,
                 siteLon,
                 siteElev,
                 info.RightAscension,
-                info.Declination,
-                info.EquatorialSystem.ToString(),
+                info.Altitude,
+                info.Azimuth,
                 info.SideOfPier.ToString());
 
             if (position.SamePoseAs(lastWritten)) {
@@ -265,14 +267,14 @@ namespace MountBackup.Services {
         }
 
         /// <summary>
-        /// A static reported Alt/Az alone is weak evidence of a freeze: many drivers round
-        /// Alt/Az coarsely, and near the pole the true motion is only arcseconds per minute,
-        /// so exact-equality "freezes" are normal while tracking works fine. RA and the
-        /// driver's sidereal clock discriminate the real failure modes:
+        /// Called when the saved pose (HA/Dec) stopped changing while tracking. A static pose
+        /// alone is not yet an alarm — RA and the driver's sidereal clock discriminate the
+        /// failure modes:
         ///   - LST not advancing        → the driver/connection is frozen (stale data);
-        ///   - RA climbing at ~sidereal → the encoders say the mount is standing still;
-        ///   - RA steady, LST advancing → the mount follows the sky and only the reported
-        ///     Alt/Az is too coarse for the 1 s equality check — not an alarm.
+        ///   - RA climbing at ~sidereal → the encoders say the mount is standing still
+        ///                                (HA = LST − RA stays constant) — a real stall;
+        ///   - RA steady, LST advancing → the mount follows the sky; the pose only looked
+        ///     static because the driver reports at coarse resolution — not an alarm.
         /// </summary>
         private void CheckWatchdog(TelescopeInfo info) {
             if (!WatchdogEnabled || !info.TrackingEnabled || info.AtPark || info.Slewing) {
@@ -294,15 +296,15 @@ namespace MountBackup.Services {
             var lstKnown = !double.IsNaN(lstStartHours) && !double.IsNaN(info.SiderealTime);
             var raKnown = !double.IsNaN(raStartHours) && !double.IsNaN(info.RightAscension);
 
-            if (lstKnown && Wrap24(info.SiderealTime - lstStartHours) < elapsedSiderealHours * 0.5) {
+            if (lstKnown && SavedPosition.Wrap24(info.SiderealTime - lstStartHours) < elapsedSiderealHours * 0.5) {
                 RaiseWatchdogAlarm($"Mount driver data has been frozen for {(int)frozenFor.TotalSeconds} s (the reported sidereal clock is not advancing) — the driver or the connection may have hung!");
-            } else if (raKnown && Math.Abs(WrapPm12(info.RightAscension - raStartHours)) > elapsedSiderealHours * 0.5) {
+            } else if (raKnown && Math.Abs(SavedPosition.WrapPm12(info.RightAscension - raStartHours)) > elapsedSiderealHours * 0.5) {
                 RaiseWatchdogAlarm($"The mount does not appear to be tracking: the reported position has been static for {(int)frozenFor.TotalSeconds} s while RA drifts at sidereal rate!");
             } else if (lstKnown && raKnown) {
-                // positive evidence of healthy tracking — the driver just reports coarse Alt/Az
-                if (!coarseAltAzNoted) {
-                    coarseAltAzNoted = true;
-                    Log(PluginLogLevel.Info, $"Reported Alt/Az was static for {(int)frozenFor.TotalSeconds} s but RA and the sidereal clock show normal tracking — this driver reports Alt/Az at coarse resolution; the watchdog accounts for that.");
+                // positive evidence of healthy tracking — the driver just reports coarsely
+                if (!coarseReportingNoted) {
+                    coarseReportingNoted = true;
+                    Log(PluginLogLevel.Info, $"Reported pose was static for {(int)frozenFor.TotalSeconds} s but RA and the sidereal clock show normal tracking — this driver reports at coarse resolution; the watchdog accounts for that.");
                 }
                 ResetWatchdogWindow();
             } else {
@@ -323,14 +325,51 @@ namespace MountBackup.Services {
             freezeReference = null;
         }
 
-        private static double Wrap24(double hours) {
-            hours %= 24;
-            return hours < 0 ? hours + 24 : hours;
+        /// <summary>Driver-reported RA/Dec normalized to JNOW plus the hour angle, using the
+        /// driver's own sidereal clock when available so save and restore share one convention.</summary>
+        private static (double HaHours, double RaJnowHours, double DecJnowDeg) AxisPoseFrom(TelescopeInfo info, double siteLonDeg) {
+            var ra = info.RightAscension;
+            var dec = info.Declination;
+            if (info.EquatorialSystem == Epoch.J2000) {
+                var coords = new Coordinates(Angle.ByHours(ra), Angle.ByDegree(dec), Epoch.J2000).Transform(Epoch.JNOW);
+                ra = coords.RA;
+                dec = coords.Dec;
+            }
+            var lst = info.SiderealTime;
+            if (double.IsNaN(lst)) { lst = AstroUtil.GetLocalSiderealTime(DateTime.Now, siteLonDeg); }
+            return (AstroUtil.GetHourAngle(lst, ra), ra, dec);
         }
 
-        private static double WrapPm12(double hours) {
-            var h = Wrap24(hours);
-            return h > 12 ? h - 24 : h;
+        /// <summary>ASCOM has no way to demand a pier side in a sync; the driver picks the axis
+        /// solution itself. If it picked the mirrored one, every subsequent GoTo is wrong —
+        /// that must be loud.</summary>
+        private async Task VerifyPierSideAfterSyncAsync(string savedPierSide, CancellationToken token) {
+            if (PierUnknown(savedPierSide)) { return; }
+            try {
+                // wait out one polling round so GetInfo reflects the post-sync state
+                await Task.Delay(TimeSpan.FromSeconds(3), token);
+            } catch (OperationCanceledException) { return; }
+
+            var pierNow = telescopeMediator.GetInfo()?.SideOfPier.ToString();
+            if (pierNow == null || PierUnknown(pierNow)) { return; }
+            if (string.Equals(pierNow, savedPierSide, StringComparison.Ordinal)) {
+                Log(PluginLogLevel.Info, $"Pier side verified after sync: {FormatPier(pierNow)}.");
+            } else {
+                var message = $"After the sync the mount reports {FormatPier(pierNow)} but the saved pose was {FormatPier(savedPierSide)} — the driver calibrated to the mirrored axis solution and GoTos may be wrong. Re-home or re-park the mount and restore again.";
+                Log(PluginLogLevel.Error, message);
+                Notification.ShowError($"Mount Backup: {message}");
+            }
+        }
+
+        private static bool PierUnknown(string pierSide) {
+            return string.IsNullOrEmpty(pierSide) || pierSide.IndexOf("unknown", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        public static string FormatPier(string pierSide) {
+            if (PierUnknown(pierSide)) { return "pier side unknown"; }
+            if (pierSide.IndexOf("east", StringComparison.OrdinalIgnoreCase) >= 0) { return "pier East"; }
+            if (pierSide.IndexOf("west", StringComparison.OrdinalIgnoreCase) >= 0) { return "pier West"; }
+            return pierSide;
         }
 
         #endregion
@@ -406,7 +445,7 @@ namespace MountBackup.Services {
                 lastAtPark = null;
                 lastWritten = null;
                 ResetWatchdogWindow();
-                coarseAltAzNoted = false;
+                coarseReportingNoted = false;
                 SetState(RestoreState.NotConnected);
                 Log(PluginLogLevel.Info, "Mount disconnected. Last saved position is kept for the next connect.");
             } catch (Exception ex) {
@@ -537,32 +576,39 @@ namespace MountBackup.Services {
                 }
 
                 // deviation threshold: if the mount already believes it is (nearly) where the
-                // saved pose says, it did not lose its state — leave it alone
+                // saved pose says, it did not lose its state — leave it alone. Compared in AXIS
+                // space (HA/Dec/pier), not as sky directions: at the pole all hour axis angles
+                // point the same way, and a direction comparison would wrongly skip the sync.
                 var threshold = DeviationThresholdDegrees;
-                if (!force && threshold > 0 && !double.IsNaN(info.Altitude) && !double.IsNaN(info.Azimuth)) {
-                    var separation = AngularSeparationDeg(saved.AltDeg, saved.AzDeg, info.Altitude, info.Azimuth);
-                    if (separation < threshold) {
-                        Log(PluginLogLevel.Info, $"Mount's reported position is within {separation:F3}° of the saved position (threshold {threshold:F2}°) — sync skipped.");
+                if (!force && threshold > 0 && !double.IsNaN(info.RightAscension) && !double.IsNaN(info.Declination)) {
+                    var (haNow, _, decNow) = AxisPoseFrom(info, saved.SiteLonDeg);
+                    var haOffsetDeg = Math.Abs(SavedPosition.WrapPm12(haNow - saved.HaHours)) * 15.0;
+                    var decOffsetDeg = Math.Abs(decNow - saved.DecDeg);
+                    var pierNow = info.SideOfPier.ToString();
+                    var pierMatches = PierUnknown(pierNow) || PierUnknown(saved.PierSide)
+                        || string.Equals(pierNow, saved.PierSide, StringComparison.Ordinal);
+                    if (haOffsetDeg < threshold && decOffsetDeg < threshold && pierMatches) {
+                        Log(PluginLogLevel.Info, $"Mount's reported axis pose is within the threshold of the saved one (ΔHA {haOffsetDeg:F3}°, ΔDec {decOffsetDeg:F3}°, threshold {threshold:F2}°) — sync skipped.");
                         Notification.ShowInformation("Mount Backup: mount position already matches the saved position — sync skipped.");
                         return;
                     }
-                    Log(PluginLogLevel.Info, $"Mount's reported position deviates {separation:F3}° from the saved position — restoring.");
+                    Log(PluginLogLevel.Info, $"Mount's reported axis pose deviates from the saved one (ΔHA {haOffsetDeg:F3}°, ΔDec {decOffsetDeg:F3}°{(pierMatches ? "" : ", pier side differs")}; threshold {threshold:F2}°) — restoring.");
                 }
 
-                // the time-independent core: saved Alt/Az + saved site, evaluated at the CURRENT time
-                var topo = new TopocentricCoordinates(
-                    Angle.ByDegree(saved.AzDeg),
-                    Angle.ByDegree(saved.AltDeg),
-                    Angle.ByDegree(saved.SiteLatDeg),
-                    Angle.ByDegree(saved.SiteLonDeg),
-                    saved.SiteElevM);
-                var coords = topo.Transform(Epoch.JNOW);
+                // the time-independent core: the saved hour angle is fixed to the earth, so the
+                // equivalent RA is simply current LST minus saved HA
+                var lstNow = info.SiderealTime;
+                if (double.IsNaN(lstNow)) { lstNow = AstroUtil.GetLocalSiderealTime(DateTime.Now, saved.SiteLonDeg); }
+                var coords = new Coordinates(
+                    Angle.ByHours(SavedPosition.Wrap24(lstNow - saved.HaHours)),
+                    Angle.ByDegree(saved.DecDeg),
+                    Epoch.JNOW);
                 if (info.EquatorialSystem == Epoch.J2000) {
                     coords = coords.Transform(Epoch.J2000);
                 }
 
                 Log(PluginLogLevel.Info,
-                    $"Restoring Alt {AstroUtil.DegreesToDMS(saved.AltDeg)} / Az {AstroUtil.DegreesToDMS(saved.AzDeg)} (saved {FormatAge(age)} ago) → RA {coords.RAString} / Dec {coords.DecString} ({coords.Epoch}).");
+                    $"Restoring HA {AstroUtil.HoursToHMS(saved.HaHours)} / Dec {AstroUtil.DegreesToDMS(saved.DecDeg)} ({FormatPier(saved.PierSide)}, saved {FormatAge(age)} ago) → RA {coords.RAString} / Dec {coords.DecString} ({coords.Epoch}).");
 
                 var wasTracking = info.TrackingEnabled;
                 if (!wasTracking) {
@@ -592,6 +638,7 @@ namespace MountBackup.Services {
                 if (synced) {
                     Log(PluginLogLevel.Info, $"Position restored: the mount now points to RA {coords.RAString} / Dec {coords.DecString}.");
                     Notification.ShowSuccess($"Mount Backup: position restored (RA {coords.RAString} / Dec {coords.DecString}).");
+                    await VerifyPierSideAfterSyncAsync(saved.PierSide, timeout.Token);
                 } else {
                     Log(PluginLogLevel.Error, "Sync was rejected. Check that 'No Sync' is not enabled under Options > Equipment > Telescope and that the driver accepts syncs. Park and unpark to retry.");
                     Notification.ShowError("Mount Backup: sync was rejected by the mount — position NOT restored.");
@@ -669,13 +716,6 @@ namespace MountBackup.Services {
                 }
             }
             LogEmitted?.Invoke(entry);
-        }
-
-        public static double AngularSeparationDeg(double alt1Deg, double az1Deg, double alt2Deg, double az2Deg) {
-            const double d2r = Math.PI / 180.0;
-            var cosSep = Math.Sin(alt1Deg * d2r) * Math.Sin(alt2Deg * d2r)
-                       + Math.Cos(alt1Deg * d2r) * Math.Cos(alt2Deg * d2r) * Math.Cos((az1Deg - az2Deg) * d2r);
-            return Math.Acos(Math.Clamp(cosSep, -1.0, 1.0)) / d2r;
         }
 
         public static string FormatAge(TimeSpan age) {
