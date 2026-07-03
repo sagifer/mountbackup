@@ -1,0 +1,65 @@
+<ResourceDictionary
+    x:Class="MountBackup.Options.PluginOptionsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <DataTemplate x:Key="Mount Backup_Options">
+        <StackPanel Orientation="Vertical" Margin="10" MaxWidth="700" HorizontalAlignment="Left">
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                Mount Backup continuously saves the mount position in a time-independent Alt/Az format
+                and syncs it back on connect or unpark. Made for clutchless mounts that cannot move
+                while powered off. Tracking is always switched off after the restore sync.
+            </TextBlock>
+
+            <CheckBox Content="Auto-restore position on connect/unpark"
+                      IsChecked="{Binding AutoRestoreEnabled, Mode=TwoWay}"
+                      Margin="0,0,0,10" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                <TextBlock Text="Deviation threshold (degrees):" VerticalAlignment="Center" />
+                <TextBox Text="{Binding DeviationThresholdDegrees, Mode=TwoWay}"
+                         Width="60" Margin="8,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontStyle="Italic">
+                The sync is skipped when the mount's reported position is already within this angle
+                of the saved position (the mount did not lose its state). Set to 0 to always sync.
+                The manual Restore now button always syncs.
+            </TextBlock>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                <CheckBox Content="Freeze watchdog"
+                          IsChecked="{Binding WatchdogEnabled, Mode=TwoWay}"
+                          VerticalAlignment="Center" />
+                <TextBlock Text="alarm after" VerticalAlignment="Center" Margin="10,0,0,0" />
+                <TextBox Text="{Binding WatchdogTimeoutSeconds, Mode=TwoWay}"
+                         Width="50" Margin="5,0,5,0" VerticalAlignment="Center" />
+                <TextBlock Text="seconds" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontStyle="Italic">
+                Raises an error notification when the mount position stops changing while tracking —
+                a strong sign of a firmware freeze or an unresponsive driver.
+            </TextBlock>
+
+            <CheckBox Content="Log plugin activity"
+                      IsChecked="{Binding LoggingEnabled, Mode=TwoWay}"
+                      Margin="0,0,0,2" />
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontStyle="Italic">
+                When disabled, the plugin writes no Info/Warning entries to the NINA log or to its
+                panel log window. Errors and watchdog alarms are always logged.
+            </TextBlock>
+
+            <TextBlock Text="Position file (per profile):" Margin="0,0,0,2" />
+            <TextBox Text="{Binding PositionFilePath, Mode=OneWay}"
+                     IsReadOnly="True"
+                     Margin="0,0,0,10" />
+
+            <Button Content="Reset saved position"
+                    Command="{Binding ResetCommand}"
+                    HorizontalAlignment="Left"
+                    Padding="10,3" />
+            <TextBlock TextWrapping="Wrap" Margin="0,5,0,0" FontStyle="Italic">
+                Reset deletes the saved position. No position will be restored until a new one is saved.
+            </TextBlock>
+        </StackPanel>
+    </DataTemplate>
+</ResourceDictionary>

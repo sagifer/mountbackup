@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>MountBackup</RootNamespace>
+    <AssemblyName>MountBackup</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <UseWPF>true</UseWPF>
+    <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NINA.Plugin" Version="3.2.0.9001" />
+  </ItemGroup>
+
+  <Target Name="DeployPlugin" AfterTargets="PostBuildEvent" Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="if not exist &quot;%localappdata%\NINA\Plugins\3.0.0&quot; ( mkdir &quot;%localappdata%\NINA\Plugins\3.0.0&quot; )&#xD;&#xA;if not exist &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; ( mkdir &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; )&#xD;&#xA;xcopy &quot;$(TargetPath)&quot; &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; /h/i/c/k/e/r/y" />
+  </Target>
+
+</Project>
