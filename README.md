@@ -34,8 +34,8 @@ again — no plate solve, no manual repositioning.
   *current* sidereal time and syncs the mount to it. Works after any downtime — minutes
   or weeks. After the sync the reported **pier side is verified** against the saved one;
   a mismatch (the driver calibrated to the mirrored axis solution) raises a loud error.
-- If tracking is off, it is enabled just for the sync, and **tracking is always switched
-  off after the restore** so the mount never runs away unattended.
+- If tracking is off, it is enabled just for the sync and **switched back off afterwards**;
+  tracking that was already running (e.g. started by NINA on unpark) is left on.
 - **Deviation threshold**: if the mount's reported axis pose (ΔHA, ΔDec, pier side) is
   already within the configured angle of the saved one (default 1°), the sync is skipped —
   on a healthy night the plugin never touches the mount. Set 0 to always sync.

@@ -9,7 +9,8 @@
                 Mount Backup continuously saves the mount's physical axis pose (hour angle,
                 declination and pier side — time-independent and unambiguous even at the pole)
                 and syncs it back on connect or unpark. Made for clutchless mounts that cannot
-                move while powered off. Tracking is always switched off after the restore sync.
+                move while powered off. Tracking enabled only for the sync is switched back off
+                afterwards; tracking that was already running is left on.
             </TextBlock>
 
             <CheckBox Content="Auto-restore position on connect/unpark"

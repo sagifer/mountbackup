@@ -14,8 +14,8 @@ koordináta-tudását. A plugin:
   a mentett óraszögből az *aktuális* szideridőre számolt RA-val, így akármennyi idő telt el,
   a mount koordinátában is ugyanoda mutat, ahova fizikailag; sync után a **pier side-ot
   visszaellenőrzi**, eltérésnél (tükrözött tengelymegoldás) hangos hibát jelez;
-- ha a tracking nem megy, a sync idejére bekapcsolja, és **a sync után mindenképpen kikapcsolja
-  a követést**;
+- ha a tracking nem megy, a sync idejére bekapcsolja, majd **visszakapcsolja kikapcsoltra**;
+  a már futó követést (pl. amit a NINA indított unparkkor) békén hagyja;
 - minden lépést időbélyeggel logol a saját dockable paneljére (Imaging fül) és a NINA logba,
   a fontos eseményekről (sikeres/sikertelen restore, riasztás) **NINA toast értesítést** is ad;
   a logolás az Options oldalon kikapcsolható (hibák és riasztások ilyenkor is logolódnak);
@@ -71,8 +71,9 @@ Tipp: a mentett pozíció frissessége a NINA *Device Polling Interval* beállí
 - csatlakozás unparkolt mounttal → azonnali restore-sync;
 - csatlakozás parkolt mounttal → restore az unpark pillanatában (addig a mentés szünetel);
 - külső unpark (másik ASCOM kliensből) → a pollozott AtPark-átmenet is triggerel;
-- tracking kikapcsolva restore-kor → a plugin bekapcsolja, sync-el, majd kikapcsolja;
-- sync után a tracking **mindig** kikapcsol, akkor is, ha előtte be volt kapcsolva;
+- tracking kikapcsolva restore-kor → a plugin bekapcsolja, sync-el, majd visszakapcsolja
+  kikapcsoltra;
+- tracking bekapcsolva restore-kor → a sync után is bekapcsolva marad;
 - Reset függő restore közben → a restore elmarad, a mentés folytatódik;
 - a profil `No Sync` telescope-beállítása mellett a sync elutasítását a log és egy hiba-toast jelzi;
 - **Restore now** gomb → kézi sync auto-restore kikapcsolva is (toast + log);

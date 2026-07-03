@@ -714,9 +714,12 @@ namespace MountBackup.Services {
                 try {
                     synced = await telescopeMediator.Sync(coords);
                 } finally {
-                    // tracking is ALWAYS switched off after the sync, even if it was on before
-                    telescopeMediator.SetTrackingEnabled(false);
-                    Log(PluginLogLevel.Info, "Tracking switched off after sync.");
+                    // only revert what the plugin enabled itself for the sync; tracking that
+                    // was already running (e.g. started by NINA on unpark) is left alone
+                    if (!wasTracking) {
+                        telescopeMediator.SetTrackingEnabled(false);
+                        Log(PluginLogLevel.Info, "Tracking switched back off after sync (it was off before the restore).");
+                    }
                 }
 
                 if (synced) {
