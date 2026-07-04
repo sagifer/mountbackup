@@ -33,25 +33,30 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Saved pose" Margin="0,2,10,2" />
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SavedPoseText}" Margin="0,2" FontWeight="Bold" />
 
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="Saved at" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SavedTimestampText}" Margin="0,2" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Points to" Margin="0,2,10,2"
+                           ToolTip="The physical direction the saved pose corresponds to — compare with where the telescope actually points" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SavedPointsToText}" Margin="0,2" />
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Age" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SavedAgeText}" Margin="0,2" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Saved at" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SavedTimestampText}" Margin="0,2" />
 
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="Now equals" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding CurrentEquivalentRaDecText}" Margin="0,2" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Age" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SavedAgeText}" Margin="0,2" />
 
-                <TextBlock Grid.Row="4" Grid.Column="0" Text="Mount" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding MountStatusText}" Margin="0,2" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Now equals" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding CurrentEquivalentRaDecText}" Margin="0,2" />
 
-                <TextBlock Grid.Row="5" Grid.Column="0" Text="Status" Margin="0,2,10,2" />
-                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding RestoreStateText}" Margin="0,2" />
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="Mount" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding MountStatusText}" Margin="0,2" />
+
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="Status" Margin="0,2,10,2" />
+                <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding RestoreStateText}" Margin="0,2" />
             </Grid>
 
             <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,8">

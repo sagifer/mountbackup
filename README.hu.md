@@ -35,13 +35,27 @@ koordináta-tudását. A plugin:
   hibás adat ne írhassa felül az utolsó jó pozíciót (folytatás: Restore now vagy Reset);
 - **restore-ellenőrzés**: sikeres sync után pár másodperccel visszaolvassa a jelentett pózt;
   ha a driver elfogadta a syncet, de továbbra is a régi pozíciót jelenti, vagy a tükrözött
-  pier side-ra kalibrált, hiba-értesítés jön;
+  pier side-ra kalibrált, hiba-értesítés jön; ha a driver Alt/Az kijelzése nem konzisztens a
+  saját RA/Dec-jével, azt kozmetikai eltérésként jelzi;
+- **ugrás-karantén**: slew nélküli, 0,5°-nál nagyobb pózváltozás csak akkor íródik fájlba,
+  ha három egymást követő lekérdezés megerősíti — egyetlen kiugró minta soha nem kerülhet a
+  mentésbe —, és figyelmeztetés jön, mert az ugrás vagy plate solve / restore, vagy csendes
+  állapotvesztés;
 - **Restore now** gomb: kézi visszaállítás bármikor (az auto-restore kapcsolót és a küszöböt
   figyelmen kívül hagyja);
 - a **Reset** gomb törli a mentett pozíciót — utána nem történik visszaállítás, amíg új mentés
   nem készül.
 
 Pozíciófájl: `%LOCALAPPDATA%\NINA\MountBackup\position_<profilId>.csv` (profilonként külön).
+
+## Ha a mentett póz nem egyezik a valósággal
+
+A plugin azt menti, amit a mount *hisz* — a fizikai igazsághoz nincs hozzáférése. Ha ez a
+hit egyszer hamissá vált (állapotvesztés, amit nem követett újrakalibrálás), a hamis póz
+önkonzisztensen mentődik és áll vissza — minden réteg egyetért, csak a valóság nem. A panel
+**Points to** sora mutatja, milyen irányba mutat a mentett póz: ha ez nem egyezik azzal,
+amerre a távcső ténylegesen áll, kalibrálj újra **plate solve + sync**-kel a NINA-ból (vagy
+home-reset a driverből). A javított póz azonnal, automatikusan mentésre kerül.
 
 ## Fordítás és telepítés (Windows gépen)
 

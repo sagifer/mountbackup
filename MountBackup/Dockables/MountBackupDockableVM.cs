@@ -75,6 +75,17 @@ namespace MountBackup.Dockables {
             }
         }
 
+        /// <summary>The physical direction the saved pose corresponds to — compare it with
+        /// where the telescope actually points to spot a poisoned saved position at a glance.</summary>
+        public string SavedPointsToText {
+            get {
+                var saved = service.LastSaved;
+                if (saved == null) { return "—"; }
+                var (alt, az) = SavedPosition.AltAzFromHaDec(saved.HaHours, saved.DecDeg, saved.SiteLatDeg);
+                return $"Alt {AstroUtil.DegreesToDMS(alt)}  /  Az {AstroUtil.DegreesToDMS(az)}";
+            }
+        }
+
         public string SavedTimestampText {
             get {
                 var saved = service.LastSaved;
@@ -128,6 +139,7 @@ namespace MountBackup.Dockables {
 
         private void OnServiceStateChanged() {
             RaisePropertyChanged(nameof(SavedPoseText));
+            RaisePropertyChanged(nameof(SavedPointsToText));
             RaisePropertyChanged(nameof(SavedTimestampText));
             RaisePropertyChanged(nameof(SavedAgeText));
             RaisePropertyChanged(nameof(MountStatusText));

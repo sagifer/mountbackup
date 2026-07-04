@@ -53,6 +53,12 @@ namespace MountBackup.Services {
         private static readonly TimeSpan SlewWaitTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan TrackingEnableTimeout = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan DataSettleTimeout = TimeSpan.FromSeconds(30);
+
+        // a pose jump this large without slewing is either a sync (plate solve, restore) or a
+        // silent state loss — quarantine it until consecutive ticks confirm it is not a transient
+        private const double PoseJumpThresholdDeg = 0.5;
+        private const double PoseJumpMatchToleranceDeg = 0.2;
+        private const int PoseJumpConfirmTicks = 3;
         private const int MaxBufferedLogEntries = 200;
 
         private readonly IProfileService profileService;
@@ -77,6 +83,8 @@ namespace MountBackup.Services {
         private bool watchdogAlarmed;
         private (double RaHours, double LstHours)? freezeReference;
         private bool coarseReportingNoted;
+        private SavedPosition pendingJumpPose;
+        private int pendingJumpTicks;
 
         public event Action<PluginLogEntry> LogEmitted;
         public event Action StateChanged;
@@ -259,15 +267,51 @@ namespace MountBackup.Services {
                 info.SideOfPier.ToString());
 
             if (position.SamePoseAs(lastWritten)) {
+                if (pendingJumpPose != null) {
+                    Log(PluginLogLevel.Info, "Transient pose jump discarded — the driver reported an outlier once and then reverted; nothing was saved.");
+                    pendingJumpPose = null;
+                }
                 CheckWatchdog(info);
                 return;
             }
+
+            // jump quarantine: a large pose change without slewing is either a sync (plate
+            // solve, restore) or a silent state loss. Only write it once consecutive ticks
+            // confirm it — a one-poll outlier can never reach the file — and say it loudly,
+            // because the plugin cannot tell a healing sync from a lost mount by itself.
+            if (lastWritten != null && !info.Slewing && PoseSeparationDeg(position, lastWritten) > PoseJumpThresholdDeg) {
+                if (pendingJumpPose != null && PoseSeparationDeg(position, pendingJumpPose) < PoseJumpMatchToleranceDeg) {
+                    pendingJumpTicks++;
+                } else {
+                    pendingJumpTicks = 1;
+                }
+                pendingJumpPose = position;
+                if (pendingJumpTicks < PoseJumpConfirmTicks) { return; }
+
+                var jumpDeg = PoseSeparationDeg(position, lastWritten);
+                var message = jumpDeg == double.MaxValue
+                    ? $"Saved pose changed pier side without slewing (was {FormatPier(lastWritten.PierSide)})."
+                    : $"Saved pose jumped {jumpDeg:F1}° without slewing (was HA {AstroUtil.HoursToHMS(lastWritten.HaHours)} / Dec {AstroUtil.DegreesToDMS(lastWritten.DecDeg)}).";
+                message += " If this was your plate solve or a restore, all is well; if not, the mount may have lost its state — verify before trusting the next restore.";
+                Log(PluginLogLevel.Warning, message);
+                Notification.ShowWarning($"Mount Backup: {message}");
+            }
+            pendingJumpPose = null;
 
             ResetWatchdogWindow();
             await store.AppendAsync(position);
             lastWritten = position;
             lastSaved = position;
             StateChanged?.Invoke();
+        }
+
+        /// <summary>Axis-space separation of two poses; a pier-side difference counts as a
+        /// maximal jump because it means a mirrored axis configuration.</summary>
+        private static double PoseSeparationDeg(SavedPosition a, SavedPosition b) {
+            if (!string.Equals(a.PierSide, b.PierSide, StringComparison.Ordinal)) { return double.MaxValue; }
+            return Math.Max(
+                Math.Abs(SavedPosition.WrapPm12(a.HaHours - b.HaHours)) * 15.0,
+                Math.Abs(a.DecDeg - b.DecDeg));
         }
 
         /// <summary>
@@ -297,7 +341,7 @@ namespace MountBackup.Services {
 
             var (raStartHours, lstStartHours) = freezeReference.Value;
             var elapsedSiderealHours = frozenFor.TotalHours * 1.0027379;
-            var lstKnown = !double.IsNaN(lstStartHours) && !double.IsNaN(info.SiderealTime);
+            var lstKnown = IsValidLst(lstStartHours) && IsValidLst(info.SiderealTime);
             var raKnown = !double.IsNaN(raStartHours) && !double.IsNaN(info.RightAscension);
 
             if (lstKnown && SavedPosition.Wrap24(info.SiderealTime - lstStartHours) < elapsedSiderealHours * 0.5) {
@@ -348,7 +392,7 @@ namespace MountBackup.Services {
                 reason = "RA and Dec are both exactly 0 — boot-time defaults";
                 return false;
             }
-            if (!double.IsNaN(info.SiderealTime)) {
+            if (IsValidLst(info.SiderealTime)) {
                 var lon = double.IsNaN(info.SiteLongitude)
                     ? profileService.ActiveProfile.AstrometrySettings.Longitude
                     : info.SiteLongitude;
@@ -373,8 +417,22 @@ namespace MountBackup.Services {
                 dec = coords.Dec;
             }
             var lst = info.SiderealTime;
-            if (double.IsNaN(lst)) { lst = AstroUtil.GetLocalSiderealTime(DateTime.Now, siteLonDeg); }
+            if (!IsValidLst(lst)) { lst = AstroUtil.GetLocalSiderealTime(DateTime.Now, siteLonDeg); }
             return (AstroUtil.GetHourAngle(lst, ra), ra, dec);
+        }
+
+        /// <summary>NINA reports the ASCOM SiderealTime with a −1 default (not NaN) when the
+        /// driver does not implement it — anything outside [0, 24) means "missing".</summary>
+        private static bool IsValidLst(double lst) {
+            return !double.IsNaN(lst) && lst >= 0 && lst < 24;
+        }
+
+        private static string FormatDeg(double deg) {
+            return double.IsNaN(deg) ? "n/a" : AstroUtil.DegreesToDMS(deg);
+        }
+
+        private static string FormatHours(double hours) {
+            return double.IsNaN(hours) ? "n/a" : AstroUtil.HoursToHMS(hours);
         }
 
         private const string SavingPausedHint =
@@ -411,7 +469,22 @@ namespace MountBackup.Services {
                 return;
             }
 
-            Log(PluginLogLevel.Info, $"Restore verified: the driver reports the restored pose ({FormatPier(pierNow)}).");
+            // some drivers keep showing a stale Alt/Az after a sync even though their RA/Dec is
+            // correct — flag the inconsistency so a wrong readout is not mistaken for mispointing
+            var lat = double.IsNaN(info.SiteLatitude) ? saved.SiteLatDeg : info.SiteLatitude;
+            var (impliedAlt, impliedAz) = SavedPosition.AltAzFromHaDec(haNow, decNow, lat);
+            if (!double.IsNaN(info.Altitude) && !double.IsNaN(info.Azimuth)) {
+                var altOffDeg = Math.Abs(info.Altitude - impliedAlt);
+                var azOffDeg = Math.Abs(SavedPosition.WrapPm12((info.Azimuth - impliedAz) / 15.0) * 15.0);
+                if (altOffDeg > 2 || azOffDeg > 2) {
+                    var message = $"The driver's Alt/Az readout (Alt {FormatDeg(info.Altitude)} / Az {FormatDeg(info.Azimuth)}) is inconsistent with its own RA/Dec (which implies Alt {FormatDeg(impliedAlt)} / Az {FormatDeg(impliedAz)}). Pointing is verified fine in RA/Dec — the Alt/Az display is a cosmetic driver issue.";
+                    Log(PluginLogLevel.Warning, message);
+                    Notification.ShowWarning($"Mount Backup: {message}");
+                    return;
+                }
+            }
+
+            Log(PluginLogLevel.Info, $"Restore verified: the driver reports the restored pose ({FormatPier(pierNow)}, Alt {FormatDeg(impliedAlt)} / Az {FormatDeg(impliedAz)}).");
         }
 
         private static bool PierUnknown(string pierSide) {
@@ -501,6 +574,7 @@ namespace MountBackup.Services {
                 coarseReportingNoted = false;
                 implausibleSince = null;
                 implausibleWarned = false;
+                pendingJumpPose = null;
                 SetState(RestoreState.NotConnected);
                 Log(PluginLogLevel.Info, "Mount disconnected. Last saved position is kept for the next connect.");
             } catch (Exception ex) {
@@ -640,6 +714,18 @@ namespace MountBackup.Services {
                     }
                 }
 
+                // full snapshot of what the driver claims, so anomalies are diagnosable
+                // from the panel log alone
+                var lonNow = double.IsNaN(info.SiteLongitude)
+                    ? profileService.ActiveProfile.AstrometrySettings.Longitude
+                    : info.SiteLongitude;
+                var lstComputed = AstroUtil.GetLocalSiderealTime(DateTime.Now, lonNow);
+                var lstDelta = IsValidLst(info.SiderealTime)
+                    ? $"{SavedPosition.WrapPm12(info.SiderealTime - lstComputed) * 3600.0:F0} s"
+                    : "—";
+                Log(PluginLogLevel.Info,
+                    $"Mount reports: RA {FormatHours(info.RightAscension)} / Dec {FormatDeg(info.Declination)} / Alt {FormatDeg(info.Altitude)} / Az {FormatDeg(info.Azimuth)} / {FormatPier(info.SideOfPier.ToString())} / LST {(IsValidLst(info.SiderealTime) ? AstroUtil.HoursToHMS(info.SiderealTime) : "n/a")} (computed {AstroUtil.HoursToHMS(lstComputed)}, Δ {lstDelta}).");
+
                 var saved = await store.LoadLastAsync();
                 if (saved == null) {
                     Log(PluginLogLevel.Info, "No saved position — nothing to restore.");
@@ -680,7 +766,7 @@ namespace MountBackup.Services {
                 // the time-independent core: the saved hour angle is fixed to the earth, so the
                 // equivalent RA is simply current LST minus saved HA
                 var lstNow = info.SiderealTime;
-                if (double.IsNaN(lstNow)) { lstNow = AstroUtil.GetLocalSiderealTime(DateTime.Now, saved.SiteLonDeg); }
+                if (!IsValidLst(lstNow)) { lstNow = AstroUtil.GetLocalSiderealTime(DateTime.Now, saved.SiteLonDeg); }
                 var coords = new Coordinates(
                     Angle.ByHours(SavedPosition.Wrap24(lstNow - saved.HaHours)),
                     Angle.ByDegree(saved.DecDeg),
@@ -775,6 +861,7 @@ namespace MountBackup.Services {
             Interlocked.Exchange(ref saveSuspended, 0);
             // the suspension window must not count as "frozen" for the watchdog
             ResetWatchdogWindow();
+            pendingJumpPose = null;
             var connected = telescopeMediator.GetInfo()?.Connected == true;
             SetState(connected ? RestoreState.Monitoring : RestoreState.NotConnected);
         }

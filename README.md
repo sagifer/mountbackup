@@ -52,7 +52,11 @@ again — no plate solve, no manual repositioning.
   bogus data can never overwrite the last good position (resume with Restore now or Reset).
 - **Restore verification**: a few seconds after a successful sync the reported pose is read
   back; if the driver accepted the sync but still reports the old position, or calibrated
-  to the mirrored pier side, an error notification is raised.
+  to the mirrored pier side, an error notification is raised. A driver whose Alt/Az readout
+  disagrees with its own RA/Dec is flagged as a cosmetic inconsistency.
+- **Jump quarantine**: a pose change larger than 0.5° without slewing is written only after
+  three consecutive polls confirm it — a one-poll outlier can never reach the file — and
+  raises a warning, because it is either your plate solve / a restore, or a silent state loss.
 - **Restore now** button: manual restore at any time (ignores the auto-restore switch and
   the deviation threshold).
 - **Reset** button: deletes the saved position; nothing is restored until a new one is
@@ -63,6 +67,15 @@ again — no plate solve, no manual repositioning.
   (errors and alarms are always logged).
 
 Position file: `%LOCALAPPDATA%\NINA\MountBackup\position_<profileId>.csv` (one per profile).
+
+## If the saved pose does not match reality
+
+The plugin saves what the mount *believes*; it has no access to the physical truth. If that
+belief once became wrong (a lost state that was never recalibrated), the wrong pose is saved
+and restored self-consistently — every layer agrees, only reality disagrees. The panel's
+**Points to** row shows the direction the saved pose corresponds to: if it disagrees with
+where the telescope physically points, recalibrate with a **plate solve + sync** in NINA
+(or re-home the mount). The corrected pose is saved immediately and automatically.
 
 ## Install / build
 

@@ -133,6 +133,23 @@ namespace MountBackup.Services {
                 && SiteLonDeg == other.SiteLonDeg;
         }
 
+        /// <summary>The direction a pose points to. Time-independent: Alt/Az follows from
+        /// HA/Dec and the site latitude alone.</summary>
+        public static (double AltDeg, double AzDeg) AltAzFromHaDec(double haHours, double decDeg, double latDeg) {
+            const double d2r = Math.PI / 180.0;
+            var ha = haHours * 15.0 * d2r;
+            var dec = decDeg * d2r;
+            var lat = latDeg * d2r;
+            var sinAlt = Math.Sin(dec) * Math.Sin(lat) + Math.Cos(dec) * Math.Cos(lat) * Math.Cos(ha);
+            var altDeg = Math.Asin(Math.Clamp(sinAlt, -1.0, 1.0)) / d2r;
+            // azimuth measured from north through east
+            var azDeg = Math.Atan2(
+                -Math.Sin(ha) * Math.Cos(dec),
+                Math.Sin(dec) * Math.Cos(lat) - Math.Cos(dec) * Math.Sin(lat) * Math.Cos(ha)) / d2r;
+            if (azDeg < 0) { azDeg += 360; }
+            return (altDeg, azDeg);
+        }
+
         public static double Wrap24(double hours) {
             hours %= 24;
             return hours < 0 ? hours + 24 : hours;
