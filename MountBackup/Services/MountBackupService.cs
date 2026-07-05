@@ -438,6 +438,11 @@ namespace MountBackup.Services {
         private const string SavingPausedHint =
             "Saving stays paused to protect the last good position — use Restore now (or Reset) once the mount is healthy.";
 
+        /// <summary>Mount limit zones (meridian / horizon / cable-wrap limits) are driver-internal
+        /// settings with no ASCOM API to read them — the plugin can only name the failure mode.</summary>
+        private const string LimitZoneHint =
+            "A common cause is a mount limit zone (meridian, horizon or cable-wrap limits): inside it many mounts accept the sync command but silently ignore it, or reject it outright. These limits cannot be read via ASCOM, so the plugin cannot check them — move the telescope OUT of the zone with the manual slew controls / hand controller, then press Restore now.";
+
         /// <summary>Some drivers accept a sync and still keep reporting the old position, and
         /// ASCOM has no way to demand a pier side — the driver picks the axis solution itself.
         /// Read the state back after a polling round and alarm loudly when the restore did not
@@ -455,9 +460,9 @@ namespace MountBackup.Services {
             var haOffsetDeg = Math.Abs(SavedPosition.WrapPm12(haNow - saved.HaHours)) * 15.0;
             var decOffsetDeg = Math.Abs(decNow - saved.DecDeg);
             if (haOffsetDeg > 0.5 || decOffsetDeg > 0.5) {
-                var message = $"The driver accepted the sync but still reports a pose {Math.Max(haOffsetDeg, decOffsetDeg):F2}° away from the restored one — the restore did NOT take effect. Check the driver's sync handling ('No Sync' option, alignment model).";
+                var message = $"The driver accepted the sync but still reports a pose {Math.Max(haOffsetDeg, decOffsetDeg):F2}° away from the restored one — the restore did NOT take effect. {LimitZoneHint} Also check the driver's sync handling ('No Sync' option, alignment model).";
                 Log(PluginLogLevel.Error, message);
-                Notification.ShowError($"Mount Backup: {message}");
+                Notification.ShowError($"Mount Backup: the sync was silently ignored — the restore did NOT take effect. Likely a mount limit zone; move the telescope out manually, then press Restore now.");
                 return;
             }
 
@@ -763,6 +768,17 @@ namespace MountBackup.Services {
                     Log(PluginLogLevel.Info, $"Mount's reported axis pose deviates from the saved one (ΔHA {haOffsetDeg:F3}°, ΔDec {decOffsetDeg:F3}°{(pierMatches ? "" : ", pier side differs")}; threshold {threshold:F2}°) — restoring.");
                 }
 
+                // the plugin cannot read the driver's limit zones, but a below-horizon believed
+                // or target pose is a strong predictor that the sync will be silently ignored
+                var latNow = double.IsNaN(info.SiteLatitude) ? saved.SiteLatDeg : info.SiteLatitude;
+                var (haBelieved, _, decBelieved) = AxisPoseFrom(info, saved.SiteLonDeg);
+                var (believedAlt, _) = SavedPosition.AltAzFromHaDec(haBelieved, decBelieved, latNow);
+                var (targetAlt, _) = SavedPosition.AltAzFromHaDec(saved.HaHours, saved.DecDeg, saved.SiteLatDeg);
+                if (believedAlt < 0 || targetAlt < 0) {
+                    Log(PluginLogLevel.Warning,
+                        $"{(believedAlt < 0 ? "The mount believes it is below the horizon" : "The saved pose is below the horizon")} (believed Alt {FormatDeg(believedAlt)}, target Alt {FormatDeg(targetAlt)}) — many mounts ignore or reject syncs inside a limit zone, so this sync may not take effect. If it fails, move the telescope out with the manual slew controls and press Restore now.");
+                }
+
                 // the time-independent core: the saved hour angle is fixed to the earth, so the
                 // equivalent RA is simply current LST minus saved HA
                 var lstNow = info.SiderealTime;
@@ -816,8 +832,8 @@ namespace MountBackup.Services {
                     Interlocked.Exchange(ref restoreArmed, 1);
                     keepSuspended = true;
                     SetState(RestoreState.RestorePending);
-                    Log(PluginLogLevel.Error, "Sync was rejected. Check that 'No Sync' is not enabled under Options > Equipment > Telescope and that the driver accepts syncs. Park and unpark to retry. " + SavingPausedHint);
-                    Notification.ShowError("Mount Backup: sync was rejected by the mount — position NOT restored.");
+                    Log(PluginLogLevel.Error, $"Sync was rejected. {LimitZoneHint} Also check that 'No Sync' is not enabled under Options > Equipment > Telescope. Park and unpark to retry. {SavingPausedHint}");
+                    Notification.ShowError("Mount Backup: sync was rejected by the mount — position NOT restored. Likely a mount limit zone; move the telescope out manually, then press Restore now.");
                 }
             } catch (OperationCanceledException) {
                 keepSuspended = true;

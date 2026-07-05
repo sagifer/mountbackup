@@ -90,11 +90,13 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}" />
                                         <Style.Triggers>
+                                            <!-- explicit colors: the theme's notification brushes are meant as banner
+                                                 backgrounds and are barely readable as text on the dark background -->
                                             <DataTrigger Binding="{Binding IsWarning}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource NotificationWarningBrush}" />
+                                                <Setter Property="Foreground" Value="Orange" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsError}" Value="True">
-                                                <Setter Property="Foreground" Value="{DynamicResource NotificationErrorBrush}" />
+                                                <Setter Property="Foreground" Value="Tomato" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

@@ -77,6 +77,22 @@ and restored self-consistently — every layer agrees, only reality disagrees. T
 where the telescope physically points, recalibrate with a **plate solve + sync** in NINA
 (or re-home the mount). The corrected pose is saved immediately and automatically.
 
+## Known pitfall: mount limit zones
+
+Mounts can end up believing they are inside a **limit zone** (meridian, horizon or
+cable-wrap limits). Inside such a zone many mounts **accept the sync command but silently
+ignore it** — the coordinates simply do not change — while others reject it outright.
+These limits are driver-internal settings with **no ASCOM API to read them**, so the
+plugin cannot check them up front. What it does instead:
+
+- before the sync it warns when the believed or target pose is **below the horizon**
+  (a strong predictor of a limit-zone refusal);
+- after the sync it reads the pose back, and if the sync was silently ignored, raises an
+  error naming the limit zone as the likely cause.
+
+**Recovery**: move the telescope out of the zone with the manual slew controls / hand
+controller, then press **Restore now**.
+
 ## Install / build
 
 Requires the .NET 8 SDK (or Visual Studio 2022) on Windows.
