@@ -17,7 +17,8 @@
     <PackageReference Include="NINA.Plugin" Version="3.2.0.9001" />
   </ItemGroup>
 
-  <Target Name="DeployPlugin" AfterTargets="PostBuildEvent" Condition="'$(OS)' == 'Windows_NT'">
+  <!-- local convenience deploy only — skipped on CI (GitHub Actions sets CI=true) -->
+  <Target Name="DeployPlugin" AfterTargets="PostBuildEvent" Condition="'$(OS)' == 'Windows_NT' and '$(CI)' != 'true'">
     <Exec Command="if not exist &quot;%localappdata%\NINA\Plugins\3.0.0&quot; ( mkdir &quot;%localappdata%\NINA\Plugins\3.0.0&quot; )&#xD;&#xA;if not exist &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; ( mkdir &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; )&#xD;&#xA;xcopy &quot;$(TargetPath)&quot; &quot;%localappdata%\NINA\Plugins\3.0.0\$(TargetName)&quot; /h/i/c/k/e/r/y" />
   </Target>
 
