@@ -77,6 +77,23 @@ and restored self-consistently — every layer agrees, only reality disagrees. T
 where the telescope physically points, recalibrate with a **plate solve + sync** in NINA
 (or re-home the mount). The corrected pose is saved immediately and automatically.
 
+## Different sites, home positions, hemispheres
+
+Nothing site- or mount-specific is built into the plugin:
+
+- **Geographic location** comes from the mount driver at every save (falling back to the
+  NINA profile's astrometry settings) and is stored with each sample; all sidereal-time
+  and Alt/Az math uses those stored values. Users at any longitude/latitude — including
+  the **southern hemisphere** — need no configuration.
+- **Home and park positions are never assumed.** The plugin saves and restores whatever
+  physical pose the mount is in; home only appears in one diagnostic hint (a mount waking
+  up pointing at the celestial pole — north or south), and if a mount uses a different
+  home convention, that hint simply stays silent while everything else works.
+- **Moved rig**: a pose is only valid at the site where it was saved. If the reported site
+  differs by more than ~0.1° (≈ 10 km) from the saved one, the automatic restore is
+  skipped (saving continues at the new site); the manual **Restore now** can override.
+- Positions are stored **per NINA profile**, so multi-rig setups stay separated.
+
 ## Known pitfall: mount limit zones
 
 Mounts can end up believing they are inside a **limit zone** (meridian, horizon or

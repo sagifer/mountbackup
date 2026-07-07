@@ -742,10 +742,23 @@ namespace MountBackup.Services {
                     Log(PluginLogLevel.Warning, $"Saved position is {FormatAge(age)} old — restoring anyway (a clutchless mount cannot have moved).");
                 }
 
-                if (!double.IsNaN(info.SiteLatitude) && !double.IsNaN(info.SiteLongitude) &&
-                    (Math.Abs(info.SiteLatitude - saved.SiteLatDeg) > 0.01 || Math.Abs(info.SiteLongitude - saved.SiteLonDeg) > 0.01)) {
-                    Log(PluginLogLevel.Warning,
-                        $"Saved site ({saved.SiteLatDeg:F4}, {saved.SiteLonDeg:F4}) differs from the mount's current site ({info.SiteLatitude:F4}, {info.SiteLongitude:F4}) — was the rig moved? The restored position may be wrong.");
+                // a pose is only valid at the site where it was saved: HA/Dec is earth-fixed
+                // relative to THAT observing location. A moved rig makes the saved pose
+                // meaningless, so a real site change skips the automatic restore entirely.
+                if (!double.IsNaN(info.SiteLatitude) && !double.IsNaN(info.SiteLongitude)) {
+                    var siteDeltaDeg = Math.Max(
+                        Math.Abs(info.SiteLatitude - saved.SiteLatDeg),
+                        Math.Abs(SavedPosition.WrapPm12((info.SiteLongitude - saved.SiteLonDeg) / 15.0) * 15.0));
+                    if (siteDeltaDeg > 0.1 && !force) {
+                        Log(PluginLogLevel.Error,
+                            $"Restore skipped — the saved pose belongs to a different site (saved {saved.SiteLatDeg:F4}, {saved.SiteLonDeg:F4}; current {info.SiteLatitude:F4}, {info.SiteLongitude:F4}). Was the rig moved? A pose is only valid where it was saved. Saving continues with the current site; use Restore now to override.");
+                        Notification.ShowWarning("Mount Backup: restore skipped — the rig's site changed since the position was saved.");
+                        return;
+                    }
+                    if (siteDeltaDeg > 0.01) {
+                        Log(PluginLogLevel.Warning,
+                            $"Saved site ({saved.SiteLatDeg:F4}, {saved.SiteLonDeg:F4}) differs from the mount's current site ({info.SiteLatitude:F4}, {info.SiteLongitude:F4}) — was the rig moved? The restored position may be wrong.{(force && siteDeltaDeg > 0.1 ? " Proceeding because this is a manual restore." : "")}");
+                    }
                 }
 
                 // believed axis pose vs the saved one, compared in AXIS space (HA/Dec/pier),
@@ -761,10 +774,11 @@ namespace MountBackup.Services {
                 var deviationDeg = pierMatches ? Math.Max(haOffsetDeg, decOffsetDeg) : double.MaxValue;
 
                 // signature of firmware that auto-unparks at power-on: the mount wakes up
-                // believing its home position (the pole) although it physically stayed put
-                if (decBelieved > 85 && deviationDeg > 10) {
+                // believing its home position (the celestial pole — north or south depending
+                // on the hemisphere) although it physically stayed put
+                if (Math.Abs(decBelieved) > 85 && deviationDeg > 10) {
                     Log(PluginLogLevel.Warning,
-                        "The mount appears to have booted into its home belief (pointing at the pole) while it physically stayed where it was — typical of firmware that auto-unparks at power-on. Restoring the saved pose.");
+                        "The mount appears to have booted into its home belief (pointing at the celestial pole) while it physically stayed where it was — typical of firmware that auto-unparks at power-on. Restoring the saved pose.");
                 }
 
                 // deviation threshold: if the mount already believes it is (nearly) where the
