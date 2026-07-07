@@ -748,18 +748,29 @@ namespace MountBackup.Services {
                         $"Saved site ({saved.SiteLatDeg:F4}, {saved.SiteLonDeg:F4}) differs from the mount's current site ({info.SiteLatitude:F4}, {info.SiteLongitude:F4}) — was the rig moved? The restored position may be wrong.");
                 }
 
+                // believed axis pose vs the saved one, compared in AXIS space (HA/Dec/pier),
+                // not as sky directions: at the pole all hour axis angles point the same way,
+                // and a direction comparison would wrongly equate them
+                var latNow = double.IsNaN(info.SiteLatitude) ? saved.SiteLatDeg : info.SiteLatitude;
+                var (haBelieved, _, decBelieved) = AxisPoseFrom(info, saved.SiteLonDeg);
+                var haOffsetDeg = Math.Abs(SavedPosition.WrapPm12(haBelieved - saved.HaHours)) * 15.0;
+                var decOffsetDeg = Math.Abs(decBelieved - saved.DecDeg);
+                var pierNow = info.SideOfPier.ToString();
+                var pierMatches = PierUnknown(pierNow) || PierUnknown(saved.PierSide)
+                    || string.Equals(pierNow, saved.PierSide, StringComparison.Ordinal);
+                var deviationDeg = pierMatches ? Math.Max(haOffsetDeg, decOffsetDeg) : double.MaxValue;
+
+                // signature of firmware that auto-unparks at power-on: the mount wakes up
+                // believing its home position (the pole) although it physically stayed put
+                if (decBelieved > 85 && deviationDeg > 10) {
+                    Log(PluginLogLevel.Warning,
+                        "The mount appears to have booted into its home belief (pointing at the pole) while it physically stayed where it was — typical of firmware that auto-unparks at power-on. Restoring the saved pose.");
+                }
+
                 // deviation threshold: if the mount already believes it is (nearly) where the
-                // saved pose says, it did not lose its state — leave it alone. Compared in AXIS
-                // space (HA/Dec/pier), not as sky directions: at the pole all hour axis angles
-                // point the same way, and a direction comparison would wrongly skip the sync.
+                // saved pose says, it did not lose its state — leave it alone
                 var threshold = DeviationThresholdDegrees;
-                if (!force && threshold > 0 && !double.IsNaN(info.RightAscension) && !double.IsNaN(info.Declination)) {
-                    var (haNow, _, decNow) = AxisPoseFrom(info, saved.SiteLonDeg);
-                    var haOffsetDeg = Math.Abs(SavedPosition.WrapPm12(haNow - saved.HaHours)) * 15.0;
-                    var decOffsetDeg = Math.Abs(decNow - saved.DecDeg);
-                    var pierNow = info.SideOfPier.ToString();
-                    var pierMatches = PierUnknown(pierNow) || PierUnknown(saved.PierSide)
-                        || string.Equals(pierNow, saved.PierSide, StringComparison.Ordinal);
+                if (!force && threshold > 0) {
                     if (haOffsetDeg < threshold && decOffsetDeg < threshold && pierMatches) {
                         Log(PluginLogLevel.Info, $"Mount's reported axis pose is within the threshold of the saved one (ΔHA {haOffsetDeg:F3}°, ΔDec {decOffsetDeg:F3}°, threshold {threshold:F2}°) — sync skipped.");
                         Notification.ShowInformation("Mount Backup: mount position already matches the saved position — sync skipped.");
@@ -768,15 +779,13 @@ namespace MountBackup.Services {
                     Log(PluginLogLevel.Info, $"Mount's reported axis pose deviates from the saved one (ΔHA {haOffsetDeg:F3}°, ΔDec {decOffsetDeg:F3}°{(pierMatches ? "" : ", pier side differs")}; threshold {threshold:F2}°) — restoring.");
                 }
 
-                // the plugin cannot read the driver's limit zones, but a below-horizon believed
-                // or target pose is a strong predictor that the sync will be silently ignored
-                var latNow = double.IsNaN(info.SiteLatitude) ? saved.SiteLatDeg : info.SiteLatitude;
-                var (haBelieved, _, decBelieved) = AxisPoseFrom(info, saved.SiteLonDeg);
+                // the plugin cannot read the driver's limit zones, but a believed or target pose
+                // at/near the horizon is a strong predictor that the sync will be silently ignored
                 var (believedAlt, _) = SavedPosition.AltAzFromHaDec(haBelieved, decBelieved, latNow);
                 var (targetAlt, _) = SavedPosition.AltAzFromHaDec(saved.HaHours, saved.DecDeg, saved.SiteLatDeg);
-                if (believedAlt < 0 || targetAlt < 0) {
+                if (believedAlt < 3 || targetAlt < 3) {
                     Log(PluginLogLevel.Warning,
-                        $"{(believedAlt < 0 ? "The mount believes it is below the horizon" : "The saved pose is below the horizon")} (believed Alt {FormatDeg(believedAlt)}, target Alt {FormatDeg(targetAlt)}) — many mounts ignore or reject syncs inside a limit zone, so this sync may not take effect. If it fails, move the telescope out with the manual slew controls and press Restore now.");
+                        $"{(believedAlt < 3 ? "The mount believes it is at/near the horizon" : "The saved pose is at/near the horizon")} (believed Alt {FormatDeg(believedAlt)}, target Alt {FormatDeg(targetAlt)}) — if the driver enforces a horizon limit, the sync may be silently ignored or rejected. If it fails, move the telescope out with the manual slew controls and press Restore now.");
                 }
 
                 // the time-independent core: the saved hour angle is fixed to the earth, so the
@@ -828,6 +837,16 @@ namespace MountBackup.Services {
                     Log(PluginLogLevel.Info, $"Position restored: the mount now points to RA {coords.RAString} / Dec {coords.DecString}.");
                     Notification.ShowSuccess($"Mount Backup: position restored (RA {coords.RAString} / Dec {coords.DecString}).");
                     await VerifyRestoreAfterSyncAsync(saved, timeout.Token);
+
+                    // auto-unpark firmware caveat: if the mount was already tracking with a wrong
+                    // belief since power-on, the physical pose has drifted by the tracking time
+                    // (15°/h) — the restore cannot know that offset, only a plate solve can
+                    if (wasTracking && deviationDeg > 5) {
+                        var correction = deviationDeg == double.MaxValue ? "pier side change" : $"{deviationDeg:F1}°";
+                        Log(PluginLogLevel.Warning,
+                            $"Large correction ({correction}) applied while the mount was already tracking. If it had been tracking since power-on with a wrong belief, the physical pose has drifted by the tracking time (15°/h) and the restored position is off by that amount — run a plate solve to confirm or refine. Connect NINA promptly after powering the mount to minimise this.");
+                        Notification.ShowWarning("Mount Backup: large correction applied — run a plate solve to confirm the restored position.");
+                    }
                 } else {
                     Interlocked.Exchange(ref restoreArmed, 1);
                     keepSuspended = true;

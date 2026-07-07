@@ -93,6 +93,27 @@ plugin cannot check them up front. What it does instead:
 **Recovery**: move the telescope out of the zone with the manual slew controls / hand
 controller, then press **Restore now**.
 
+## Known pitfall: auto-unpark firmware
+
+Some controllers (early firmware) **unpark themselves and start tracking immediately at
+power-on**. Combined with a power-off without parking this poisons the mount's belief
+persistently: at the next start the mount physically sits in its park position (e.g.
+horizontal, under a roof) but believes it is at home (the pole) — an error of 45°+ on
+both axes. What the plugin does:
+
+- it recognises the signature (mount woke up believing the pole while the saved pose is
+  far away) and logs it explicitly;
+- the restore syncs the saved — physically true — pose over the wrong belief;
+- **but**: tracking runs from power-on, so the hour axis physically drifts 15°/hour until
+  the restore happens. The plugin cannot know the power-on time, so this offset cannot be
+  compensated — after a large correction it warns and recommends a **plate solve**.
+
+Practical advice: connect NINA (and let the restore run) **as soon as possible after
+powering the mount** — the elapsed tracking time is exactly the restore's error; confirm
+with a plate solve; and if the firmware allows, disable the auto-unpark behaviour or
+update the firmware. Also note a mount tracking with a wrong belief can physically run
+into the roof or pier — do not leave it powered unattended.
+
 ## Install / build
 
 Requires the .NET 8 SDK (or Visual Studio 2022) on Windows.

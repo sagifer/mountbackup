@@ -73,6 +73,27 @@ ki**, így a plugin előre nem tudja ellenőrizni őket. Amit ehelyett tesz:
 **Kiút**: a kézi mozgatással (manual slew / kézivezérlő) vidd ki a távcsövet a zónából,
 majd nyomd meg a **Restore now**-t.
 
+## Ismert buktató: auto-unpark firmware
+
+Egyes vezérlők (korai firmware) **bekapcsoláskor azonnal kiveszik magukat parkból és
+követésre állnak**. Ha ezután park nélkül történik a kikapcsolás, a mount hite tartósan
+megmérgeződik: a következő indításkor fizikailag a park pózban áll (pl. vízszintesen a
+tető alatt), de azt hiszi, home-ban (a póluson) van — 45°+ hiba mindkét tengelyen.
+Amit a plugin tesz:
+
+- felismeri a mintázatot (a mount pólus-hittel ébredt, miközben a mentett póz messze van)
+  és külön logolja;
+- a restore a mentett — fizikailag igaz — pózt sync-eli a hamis hit fölé;
+- **de**: a követés a bekapcsolástól fut, így az óratengely fizikailag 15°/órát driftel a
+  restore-ig. A bekapcsolás idejét a plugin nem ismerheti, ezt az eltolódást nem tudja
+  kompenzálni — nagy korrekció után figyelmeztet és **plate solve**-ot javasol.
+
+Gyakorlati tanács: a mount bekapcsolása után **minél hamarabb csatlakoztasd a NINA-t**
+(és fusson le a restore) — az eltelt követési idő pontosan a visszaállítás hibája; nagy
+korrekció után plate solve; és ha a firmware engedi, kapcsold ki az auto-unpark
+viselkedést vagy frissíts firmware-t. Fontos: a hamis hittel követő mount fizikailag
+belefordulhat a tetőbe/állványba — ne maradjon felügyelet nélkül bekapcsolva.
+
 ## Fordítás és telepítés (Windows gépen)
 
 Követelmény: .NET 8 SDK (vagy Visual Studio 2022).
